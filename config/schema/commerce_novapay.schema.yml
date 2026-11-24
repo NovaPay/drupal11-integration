@@ -1,0 +1,19 @@
+commerce_payment.commerce_payment_gateway.plugin.novapay:
+  type: commerce_payment_gateway_configuration
+  label: 'NovaPay payment gateway configuration'
+  mapping:
+    display_logo:
+      type: boolean
+      label: 'Display the NovaPay logo instead of the payment method name'
+
+field.field.*.*.*.third_party.commerce_novapay:
+  type: mapping
+  label: 'Commerce NovaPay field settings'
+  mapping:
+    payment_phone:
+      type: boolean
+      label: 'Use this field as a NovaPay payment phone source'
+
+views.field.commerce_novapay_order_item_refunded_amount:
+  type: views_field
+  label: 'NovaPay order item refunded amount'

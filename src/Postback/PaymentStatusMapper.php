@@ -1,0 +1,303 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Drupal\commerce_novapay\Postback;
+
+use Drupal\commerce_novapay\Payment\PendingOperation;
+use Drupal\commerce_order\Entity\OrderInterface;
+use Drupal\commerce_order\Adjustment;
+use Drupal\Core\StringTranslation\StringTranslationTrait;
+use Drupal\commerce_payment\Entity\PaymentInterface;
+use Drupal\commerce_payment\PaymentOrderUpdaterInterface;
+use Drupal\commerce_price\Price;
+
+/**
+ * Maps documented NovaPay statuses to Commerce payment transitions.
+ */
+final class PaymentStatusMapper implements PaymentStatusMapperInterface {
+
+  use StringTranslationTrait;
+
+  /**
+   * Constructs the payment status mapper.
+   */
+  public function __construct(
+    private readonly PaymentOrderUpdaterInterface $order_updater,
+  ) {}
+
+  /**
+   * {@inheritdoc}
+   */
+  public function apply(
+    PaymentInterface $payment,
+    NovaPayStatus $status,
+  ): bool {
+    if ($payment->getRemoteState() === NovaPayStatus::Voided->value
+      && $status !== NovaPayStatus::Voided) {
+      return FALSE;
+    }
+    $state = $payment->getState();
+    $transition_id = $this->getTransitionId($state->getId(), $status);
+    if ($transition_id !== NULL) {
+      $order = $payment->getOrder();
+      if (!$order instanceof OrderInterface) {
+        throw new \UnexpectedValueException(
+          'The NovaPay payment has no parent order.',
+        );
+      }
+      $released_amount = $this->applyConfirmedCaptureAmount($payment, $status);
+      $this->applyConfirmedFullRefund($payment, $status);
+      $this->clearPendingOperation($payment);
+      $state->applyTransitionById($transition_id);
+      $payment->setRemoteState($status->value);
+      $payment->save();
+      // Placed orders do not run payment processors on a regular save.
+      $this->order_updater->updateOrder($order);
+      $this->applyCaptureAdjustment($order, $payment, $released_amount);
+      $order->save();
+      return TRUE;
+    }
+
+    if (
+      $this->canUpdateRemoteState($state->getId(), $status)
+      && $payment->getRemoteState() !== $status->value
+    ) {
+      $payment->setRemoteState($status->value);
+      $payment->save();
+      return TRUE;
+    }
+
+    if ($this->canClearPendingOperationForHolded($payment, $status)) {
+      $this->clearPendingOperation($payment);
+      $payment->setRemoteState($status->value);
+      $payment->save();
+      return TRUE;
+    }
+
+    return FALSE;
+  }
+
+  /**
+   * Clears an uncertain capture or void once NovaPay confirms the hold remains.
+   */
+  private function canClearPendingOperationForHolded(
+    PaymentInterface $payment,
+    NovaPayStatus $status,
+  ): bool {
+    if (
+      $status !== NovaPayStatus::Holded
+      || $payment->getState()->getId() !== 'authorization'
+      || !$payment->hasField('novapay_pending_operation')
+    ) {
+      return FALSE;
+    }
+
+    return in_array(
+      PendingOperation::tryFrom(
+        $payment->get('novapay_pending_operation')->getString(),
+      ),
+      [PendingOperation::Capture, PendingOperation::Void],
+      TRUE,
+    );
+  }
+
+  /**
+   * Keeps Commerce balance consistent for a signed full-refund postback.
+   */
+  private function applyConfirmedFullRefund(
+    PaymentInterface $payment,
+    NovaPayStatus $status,
+  ): void {
+    if ($status !== NovaPayStatus::Voided) {
+      return;
+    }
+    if (!in_array(
+      $payment->getState()->getId(),
+      ['completed', 'partially_refunded'],
+      TRUE,
+    )) {
+      return;
+    }
+
+    $amount = $payment->getAmount();
+    if ($amount instanceof Price) {
+      $payment->setRefundedAmount($amount);
+    }
+  }
+
+  /**
+   * Applies a submitted partial capture once its postback is final.
+   */
+  private function applyConfirmedCaptureAmount(
+    PaymentInterface $payment,
+    NovaPayStatus $status,
+  ): ?Price {
+    if (
+      !in_array(
+        $status,
+        [NovaPayStatus::Paid, NovaPayStatus::HoldConfirmed],
+        TRUE,
+      )
+      ||
+      $payment->getState()->getId() !== 'authorization'
+      || !$payment->hasField('novapay_pending_operation')
+      || $payment->get('novapay_pending_operation')->getString()
+        !== PendingOperation::Capture->value
+    ) {
+      return NULL;
+    }
+
+    $authorized_amount = $payment->getAmount();
+    $number = $payment->get('novapay_pending_amount')->getString();
+    if (!$authorized_amount instanceof Price || $number === '') {
+      throw new \UnexpectedValueException(
+        'The pending NovaPay capture amount is invalid.',
+      );
+    }
+    $capture_amount = new Price(
+      $number,
+      $authorized_amount->getCurrencyCode(),
+    );
+    if (
+      !$capture_amount->isPositive()
+      || $capture_amount->greaterThan($authorized_amount)
+    ) {
+      throw new \UnexpectedValueException(
+        'The pending NovaPay capture amount is outside the authorization.',
+      );
+    }
+
+    $order = $payment->getOrder();
+    if ($order instanceof OrderInterface) {
+      $captures = $order->getData('commerce_novapay_partial_captures', []);
+      $captures = is_array($captures) ? $captures : [];
+      $captures[(string) $payment->id()] = $capture_amount->lessThan($authorized_amount);
+      $order->setData('commerce_novapay_partial_captures', $captures);
+    }
+    $payment->setAmount($capture_amount);
+    return $authorized_amount->greaterThan($capture_amount)
+      ? $authorized_amount->subtract($capture_amount)
+      : NULL;
+  }
+
+  /**
+   * Waives only the unpaid, released portion of a confirmed partial capture.
+   */
+  private function applyCaptureAdjustment(
+    OrderInterface $order,
+    PaymentInterface $payment,
+    ?Price $released_amount,
+  ): void {
+    if ($released_amount === NULL
+      || $payment->getPaymentGateway()?->getPluginId() !== 'novapay') {
+      return;
+    }
+    $source_id = 'novapay_partial_capture:' . $payment->id();
+    foreach ($order->getAdjustments() as $adjustment) {
+      if ($adjustment->getType() === 'novapay_partial_capture'
+        && $adjustment->getSourceId() === $source_id) {
+        return;
+      }
+    }
+    $balance = $order->getBalance();
+    if (!$balance instanceof Price) {
+      throw new \UnexpectedValueException('The order balance is unavailable after partial NovaPay capture.');
+    }
+    if (!$balance->isPositive()) {
+      return;
+    }
+    $amount = $released_amount->lessThan($balance) ? $released_amount : $balance;
+    $order->addAdjustment(new Adjustment([
+      'type' => 'novapay_partial_capture',
+      'label' => 'NovaPay partial capture adjustment',
+      'amount' => $amount->multiply('-1'),
+      'source_id' => $source_id,
+      'locked' => TRUE,
+    ]));
+  }
+
+  /**
+   * Clears a durable operation marker after a financial transition.
+   */
+  private function clearPendingOperation(PaymentInterface $payment): void {
+    if (!$payment->hasField('novapay_pending_operation')) {
+      return;
+    }
+
+    $payment->set('novapay_pending_operation', NULL);
+    $payment->set('novapay_pending_amount', NULL);
+  }
+
+  /**
+   * Determines whether an intermediate status is monotonic for this state.
+   */
+  private function canUpdateRemoteState(
+    string $current_state,
+    NovaPayStatus $status,
+  ): bool {
+    return match ($current_state) {
+      'pending' => in_array(
+        $status,
+        [
+          NovaPayStatus::Precreated,
+          NovaPayStatus::Created,
+          NovaPayStatus::Preprocessing,
+          NovaPayStatus::AsyncPreprocessing,
+          NovaPayStatus::Processing,
+        ],
+        TRUE,
+      ),
+      'authorization' => in_array(
+        $status,
+        [
+          NovaPayStatus::ProcessingHoldCompletion,
+          NovaPayStatus::ProcessingVoid,
+        ],
+        TRUE,
+      ),
+      'completed', 'partially_refunded' =>
+        $status === NovaPayStatus::ProcessingVoid,
+      default => FALSE,
+    };
+  }
+
+  /**
+   * Gets the allowed workflow transition for a current/remote state pair.
+   */
+  private function getTransitionId(
+    string $current_state,
+    NovaPayStatus $status,
+  ): ?string {
+    return match ($current_state) {
+      'pending' => match ($status) {
+        NovaPayStatus::Holded => 'authorize',
+        NovaPayStatus::Paid,
+        NovaPayStatus::HoldConfirmed => 'authorize_capture',
+        NovaPayStatus::Expired => 'expire',
+        NovaPayStatus::Failed => 'fail',
+        default => NULL,
+      },
+      'authorization' => match ($status) {
+        NovaPayStatus::Paid,
+        NovaPayStatus::HoldConfirmed => 'capture',
+        NovaPayStatus::Voided => 'void',
+        default => NULL,
+      },
+      'failed' => match ($status) {
+        NovaPayStatus::Expired => 'expire',
+        NovaPayStatus::Processing => 'retry',
+        NovaPayStatus::Holded => 'retry_authorize',
+        NovaPayStatus::Paid,
+        NovaPayStatus::HoldConfirmed => 'retry_authorize_capture',
+        default => NULL,
+      },
+      'completed', 'partially_refunded' => match ($status) {
+        NovaPayStatus::Voided => 'refund',
+        default => NULL,
+      },
+      default => NULL,
+    };
+  }
+
+}

@@ -1,0 +1,26 @@
+.commerce-novapay-refund-notice {
+  margin-block: 1rem;
+  padding: 1rem 1.25rem;
+  border: 2px solid #b45309;
+  border-inline-start-width: 6px;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #78350f;
+  box-shadow: 0 2px 6px rgb(120 53 15 / 12%);
+}
+
+.commerce-novapay-refund-notice__title {
+  margin: 0 0 0.5rem;
+  color: inherit;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.commerce-novapay-refund-amount-inline {
+  text-wrap: nowrap;
+}
+
+.commerce-novapay-refund-amount-inline input {
+  display: inline-block;
+  width: auto !important;
+}

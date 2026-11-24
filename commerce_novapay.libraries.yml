@@ -1,0 +1,9 @@
+refund_form:
+  css:
+    theme:
+      css/refund-form.css: {}
+  js:
+    js/refund-form.js: {}
+  dependencies:
+    - core/drupal
+    - core/once

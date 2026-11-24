@@ -1,0 +1,305 @@
+services:
+  commerce_novapay.payment_order_lock:
+    class: Drupal\commerce_novapay\Payment\PaymentOrderLock
+    arguments: ['@lock', '@entity_type.manager']
+
+  Drupal\commerce_novapay\Payment\PaymentOrderLockInterface:
+    alias: commerce_novapay.payment_order_lock
+
+  commerce_novapay.runtime_settings_form_builder:
+    class: Drupal\commerce_novapay\Form\RuntimeSettingsFormBuilder
+
+  logger.channel.commerce_novapay:
+    parent: logger.channel_base
+    arguments:
+      - 'commerce_novapay'
+
+  commerce_novapay.log_sanitizer:
+    class: Drupal\commerce_novapay\Logging\LogSanitizer
+
+  Drupal\commerce_novapay\Logging\LogSanitizerInterface:
+    alias: commerce_novapay.log_sanitizer
+
+  commerce_novapay.logger:
+    class: Drupal\commerce_novapay\Logging\NovaPayLogger
+    arguments:
+      - '@logger.channel.commerce_novapay'
+      - '@commerce_novapay.log_sanitizer'
+
+  Drupal\commerce_novapay\Logging\NovaPayLoggerInterface:
+    alias: commerce_novapay.logger
+
+  commerce_novapay.rsa_key_validator:
+    class: Drupal\commerce_novapay\Credential\RsaKeyValidator
+
+  Drupal\commerce_novapay\Credential\RsaKeyValidatorInterface:
+    alias: commerce_novapay.rsa_key_validator
+
+  commerce_novapay.signer:
+    class: Drupal\commerce_novapay\Signature\RsaSha256Signer
+    arguments:
+      - '@commerce_novapay.rsa_key_validator'
+
+  Drupal\commerce_novapay\Signature\SignerInterface:
+    alias: commerce_novapay.signer
+
+  commerce_novapay.verifier:
+    class: Drupal\commerce_novapay\Signature\RsaSha256Verifier
+    arguments:
+      - '@commerce_novapay.rsa_key_validator'
+
+  Drupal\commerce_novapay\Signature\VerifierInterface:
+    alias: commerce_novapay.verifier
+
+  commerce_novapay.sandbox_legacy_verifier:
+    class: Drupal\commerce_novapay\Signature\RsaSha1SandboxVerifier
+    arguments:
+      - '@commerce_novapay.rsa_key_validator'
+
+  Drupal\commerce_novapay\Signature\SandboxLegacyVerifierInterface:
+    alias: commerce_novapay.sandbox_legacy_verifier
+
+  commerce_novapay.api_client:
+    class: Drupal\commerce_novapay\Api\NovaPayApiClient
+    arguments:
+      - '@http_client'
+      - '@commerce_novapay.signer'
+      - '@commerce_novapay.logger'
+
+  Drupal\commerce_novapay\Api\NovaPayApiClientInterface:
+    alias: commerce_novapay.api_client
+
+  commerce_novapay.authorization_operation_manager:
+    class: Drupal\commerce_novapay\Payment\AuthorizationOperationManager
+    arguments:
+      - '@entity_type.manager'
+      - '@commerce_novapay.api_client'
+      - '@lock'
+
+  Drupal\commerce_novapay\Payment\AuthorizationOperationManagerInterface:
+    alias: commerce_novapay.authorization_operation_manager
+
+  commerce_novapay.payment_status_check_manager:
+    class: Drupal\commerce_novapay\Payment\PaymentStatusCheckManager
+    arguments:
+      - '@entity_type.manager'
+      - '@commerce_novapay.api_client'
+      - '@commerce_novapay.postback.status_mapper'
+      - '@lock'
+      - '@database'
+      - '@commerce_novapay.payment_order_lock'
+
+  Drupal\commerce_novapay\Payment\PaymentStatusCheckManagerInterface:
+    alias: commerce_novapay.payment_status_check_manager
+
+  commerce_novapay.refund_ledger:
+    class: Drupal\commerce_novapay\Payment\RefundLedgerRepository
+    arguments:
+      - '@database'
+      - '@datetime.time'
+
+  Drupal\commerce_novapay\Payment\RefundLedgerRepositoryInterface:
+    alias: commerce_novapay.refund_ledger
+
+  commerce_novapay.refund_order_adjustment:
+    class: Drupal\commerce_novapay\Payment\RefundOrderAdjustment
+
+  commerce_novapay.refund_payment_storage:
+    class: Drupal\commerce_novapay\Payment\RefundPaymentStorage
+    arguments:
+      - '@entity_type.manager'
+      - '@commerce_payment.order_updater'
+      - '@commerce_novapay.refund_order_adjustment'
+
+  commerce_novapay.refund_selection_builder:
+    class: Drupal\commerce_novapay\Payment\RefundSelectionBuilder
+    arguments:
+      - '@entity_type.manager'
+      - '@commerce_novapay.refund_ledger'
+      - '@commerce_novapay.refund_payment_storage'
+
+  commerce_novapay.pending_refund_storage:
+    class: Drupal\commerce_novapay\Payment\PendingRefundStorage
+    arguments:
+      - '@commerce_novapay.refund_selection_builder'
+
+  commerce_novapay.refund_confirmation_manager:
+    class: Drupal\commerce_novapay\Payment\RefundConfirmationManager
+    arguments:
+      - '@commerce_novapay.pending_refund_storage'
+      - '@commerce_novapay.refund_selection_builder'
+      - '@commerce_novapay.refund_payment_storage'
+      - '@commerce_novapay.refund_ledger'
+      - '@database'
+      - '@commerce_novapay.payment_order_lock'
+
+  commerce_novapay.refund_operation_manager:
+    class: Drupal\commerce_novapay\Payment\RefundOperationManager
+    arguments:
+      - '@commerce_novapay.refund_payment_storage'
+      - '@commerce_novapay.api_client'
+      - '@lock'
+      - '@commerce_novapay.refund_selection_builder'
+      - '@commerce_novapay.pending_refund_storage'
+      - '@commerce_novapay.refund_confirmation_manager'
+
+  Drupal\commerce_novapay\Payment\RefundOperationManagerInterface:
+    alias: commerce_novapay.refund_operation_manager
+
+  commerce_novapay.order_payload_builder:
+    class: Drupal\commerce_novapay\Order\OrderPayloadBuilder
+    arguments:
+      - '@commerce_novapay.order_phone_resolver'
+
+  Drupal\commerce_novapay\Order\OrderPayloadBuilderInterface:
+    alias: commerce_novapay.order_payload_builder
+
+  commerce_novapay.checkout_coordinator:
+    class: Drupal\commerce_novapay\Checkout\CheckoutCoordinator
+    arguments:
+      - '@entity_type.manager'
+      - '@commerce_novapay.api_client'
+      - '@commerce_novapay.order_payload_builder'
+      - '@lock'
+      - '@datetime.time'
+
+  Drupal\commerce_novapay\Checkout\CheckoutCoordinatorInterface:
+    alias: commerce_novapay.checkout_coordinator
+
+  commerce_novapay.checkout_payment_option_branding:
+    class: Drupal\commerce_novapay\Checkout\PaymentOptionBranding
+    arguments:
+      - '@entity_type.manager'
+      - '@extension.list.module'
+      - '@request_stack'
+
+  Drupal\commerce_novapay\Checkout\PaymentOptionBranding:
+    alias: commerce_novapay.checkout_payment_option_branding
+
+  commerce_novapay.postback.v1_parser:
+    class: Drupal\commerce_novapay\Postback\Parser\V1PostbackParser
+
+  commerce_novapay.postback.v2_parser:
+    class: Drupal\commerce_novapay\Postback\Parser\V2PostbackParser
+
+  commerce_novapay.postback.parser:
+    class: Drupal\commerce_novapay\Postback\Parser\PostbackParser
+    arguments:
+      - '@commerce_novapay.postback.v1_parser'
+      - '@commerce_novapay.postback.v2_parser'
+
+  Drupal\commerce_novapay\Postback\Parser\PostbackParserInterface:
+    alias: commerce_novapay.postback.parser
+
+  commerce_novapay.postback.status_mapper:
+    class: Drupal\commerce_novapay\Postback\PaymentStatusMapper
+    arguments: ['@commerce_payment.order_updater']
+
+  Drupal\commerce_novapay\Postback\PaymentStatusMapperInterface:
+    alias: commerce_novapay.postback.status_mapper
+
+  commerce_novapay.postback.event_repository:
+    class: Drupal\commerce_novapay\Postback\PostbackEventRepository
+    arguments:
+      - '@database'
+      - '@datetime.time'
+
+  Drupal\commerce_novapay\Postback\PostbackEventRepositoryInterface:
+    alias: commerce_novapay.postback.event_repository
+
+  commerce_novapay.postback.processor:
+    class: Drupal\commerce_novapay\Postback\PostbackProcessor
+    arguments:
+      - '@commerce_novapay.verifier'
+      - '@commerce_novapay.sandbox_legacy_verifier'
+      - '@commerce_novapay.postback.parser'
+      - '@entity_type.manager'
+      - '@commerce_novapay.postback.status_mapper'
+      - '@commerce_novapay.postback.event_repository'
+      - '@lock'
+      - '@commerce_novapay.refund_operation_manager'
+      - '@commerce_novapay.api_client'
+      - '@commerce_novapay.payment_order_lock'
+
+  Drupal\commerce_novapay\Postback\PostbackProcessorInterface:
+    alias: commerce_novapay.postback.processor
+
+  commerce_novapay.phone_normalizer:
+    class: Drupal\commerce_novapay\Phone\PhoneNormalizer
+
+  Drupal\commerce_novapay\Phone\PhoneNormalizerInterface:
+    alias: commerce_novapay.phone_normalizer
+
+  commerce_novapay.order_phone_resolver:
+    class: Drupal\commerce_novapay\Phone\OrderPhoneResolver
+    arguments:
+      - '@commerce_novapay.phone_normalizer'
+
+  Drupal\commerce_novapay\Phone\OrderPhoneResolverInterface:
+    alias: commerce_novapay.order_phone_resolver
+
+  commerce_novapay.customer_profile_phone_inspector:
+    class: Drupal\commerce_novapay\Phone\CustomerProfilePhoneInspector
+    arguments:
+      - '@entity_type.manager'
+      - '@entity_field.manager'
+
+  Drupal\commerce_novapay\Phone\CustomerProfilePhoneInspectorInterface:
+    alias: commerce_novapay.customer_profile_phone_inspector
+
+  commerce_novapay.sandbox_credential_provider:
+    class: Drupal\commerce_novapay\Credential\SandboxCredentialProvider
+    arguments:
+      - '@commerce_novapay.rsa_key_validator'
+
+  Drupal\commerce_novapay\Credential\SandboxCredentialProviderInterface:
+    alias: commerce_novapay.sandbox_credential_provider
+
+  commerce_novapay.credential_resolver:
+    class: Drupal\commerce_novapay\Credential\CredentialResolver
+    arguments:
+      - '@commerce_novapay.rsa_key_validator'
+      - '@commerce_novapay.sandbox_credential_provider'
+      - '@lock'
+
+  Drupal\commerce_novapay\Credential\CredentialResolverInterface:
+    alias: commerce_novapay.credential_resolver
+
+  commerce_novapay.credential_change_guard:
+    class: Drupal\commerce_novapay\Runtime\CredentialChangeGuard
+    arguments:
+      - '@entity_type.manager'
+
+  Drupal\commerce_novapay\Runtime\CredentialChangeGuardInterface:
+    alias: commerce_novapay.credential_change_guard
+
+  commerce_novapay.runtime_profile_storage:
+    class: Drupal\commerce_novapay\Runtime\RuntimeProfileStorage
+    arguments:
+      - '@commerce_novapay.rsa_key_validator'
+      - '@lock'
+      - 'private://commerce_novapay'
+      - '@commerce_novapay.credential_change_guard'
+
+  Drupal\commerce_novapay\Runtime\RuntimeProfileStorageInterface:
+    alias: commerce_novapay.runtime_profile_storage
+
+  commerce_novapay.runtime_ready_gateway_subscriber:
+    class: Drupal\commerce_novapay\EventSubscriber\RuntimeReadyGatewaySubscriber
+    arguments:
+      - '@commerce_novapay.credential_resolver'
+    tags:
+      - { name: event_subscriber }
+
+  commerce_novapay.payment_status_display:
+    class: Drupal\commerce_novapay\Payment\PaymentStatusDisplay
+
+  commerce_novapay.adjustment_label_subscriber:
+    class: Drupal\commerce_novapay\EventSubscriber\AdjustmentLabelSubscriber
+    tags:
+      - { name: event_subscriber }
+
+  Drupal\commerce_novapay\Payment\OrderItemRefundAmountDisplay:
+    arguments:
+      - '@commerce_novapay.refund_ledger'
+      - '@commerce_price.currency_formatter'

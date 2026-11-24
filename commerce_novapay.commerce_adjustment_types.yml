@@ -1,0 +1,12 @@
+novapay_partial_capture:
+  label: 'NovaPay partial capture adjustment'
+  singular_label: 'NovaPay partial capture adjustment'
+  plural_label: 'NovaPay partial capture adjustments'
+  has_ui: false
+  weight: 5
+novapay_partial_refund:
+  label: 'NovaPay partial refund adjustment'
+  singular_label: 'NovaPay partial refund adjustment'
+  plural_label: 'NovaPay partial refund adjustments'
+  has_ui: false
+  weight: 6
